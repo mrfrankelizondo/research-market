@@ -1,0 +1,238 @@
+# 🎯 Risk Range Trading Pro - FRAMA + DeMark + Quad Framework
+
+A professional-grade trading analysis system combining three powerful methodologies:
+- **FRAMA** (Fractal Adaptive Moving Average) - Adaptive trend following
+- **DeMark TD Sequential** - Market exhaustion and reversal signals
+- **Quad Framework** - Market regime detection for optimal positioning
+
+## 🚀 Quick Start (5 Minutes)
+
+### Option 1: Deploy Online (Recommended)
+
+1. **Fork/Upload to GitHub**
+   - Create account at [github.com](https://github.com)
+   - Create new repository
+   - Upload these 3 files
+
+2. **Deploy on Streamlit Cloud**
+   - Go to [share.streamlit.io](https://share.streamlit.io)
+   - Connect your GitHub account
+   - Select your repository
+   - Deploy!
+
+3. **Add API Key**
+   - Get free key at [twelvedata.com](https://twelvedata.com)
+   - In Streamlit Cloud: Settings → Secrets
+   - Add: `TWELVE_DATA_API_KEY = "your_key_here"`
+
+**Your app is now live at: `https://[yourname]-trading-app.streamlit.app`**
+
+### Option 2: Run Locally
+
+```bash
+# Clone or download files
+git clone [your-repo-url]
+cd trading-app
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set API key
+export TWELVE_DATA_API_KEY="your_key_here"  # Mac/Linux
+set TWELVE_DATA_API_KEY=your_key_here       # Windows
+
+# Run the app
+streamlit run app.py
+```
+
+App opens at: `http://localhost:8501`
+
+## 📊 Features
+
+### Core Indicators
+- **FRAMA**: Adapts speed based on market fractality
+- **TD Sequential**: Identifies exhaustion points (TD9/TD13)
+- **Risk Ranges**: Dynamic support/resistance bands
+- **Signal Scoring**: Multi-factor signal generation (-100 to +100)
+
+### Market Regime (Quad) Detection
+- **Quad 1** (Goldilocks): Growth↑ Inflation↓ → Buy tech/growth
+- **Quad 2** (Overheating): Growth↑ Inflation↑ → Commodities/energy
+- **Quad 3** (Stagflation): Growth↓ Inflation↑ → Defensive positions
+- **Quad 4** (Deflation): Growth↓ Inflation↓ → Bonds/cash
+
+### Analysis Tools
+- Real-time stock data (1-day, 4-hour, 1-hour)
+- Interactive charts with signal markers
+- Position sizing calculator
+- Sector-Quad alignment scoring
+- CSV data export
+
+## 🎯 How to Use
+
+### Reading Signals
+- **STRONG BUY** (Score > 50): Multiple factors aligned
+- **BUY** (Score 25-50): Positive bias
+- **NEUTRAL** (-25 to 25): Wait for clarity
+- **SELL/STRONG SELL**: Exit or avoid
+
+### Best Entry Conditions
+1. FRAMA uptrend (fast > slow)
+2. TD9 buy setup completion
+3. Price near lower band
+4. Favorable Quad alignment
+5. Signal score > 25
+
+### Risk Management
+- **Position Size**: Risk 1-2% per trade
+- **Stop Loss**: Below lower band - 0.5×ATR
+- **Take Profit 1**: FRAMA middle line
+- **Take Profit 2**: Upper band
+- **Quad Adjustment**: Reduce size in Quad 3/4
+
+## 📈 Trading Strategy
+
+### By Market Regime
+
+**Quad 1 (Best Environment)**
+- Trade aggressively
+- Buy all dips
+- Focus: AAPL, MSFT, GOOGL, NVDA
+
+**Quad 2 (Inflation Rising)**
+- Rotate to commodities
+- Focus: XOM, CVX, FCX, XLE
+
+**Quad 3 (Dangerous)**
+- Reduce positions
+- Focus: XLU, PG, KO, GLD
+
+**Quad 4 (Cash is King)**
+- Minimal trading
+- Focus: TLT, SHY, Cash
+
+## 🔧 Configuration
+
+### Environment Variables
+```bash
+TWELVE_DATA_API_KEY=your_api_key_here
+```
+
+### Streamlit Secrets (.streamlit/secrets.toml)
+```toml
+TWELVE_DATA_API_KEY = "your_api_key_here"
+```
+
+## 📚 API Information
+
+### Twelve Data API
+- **Free Tier**: 800 API calls/day
+- **Rate Limit**: 8 requests/minute
+- **Get Key**: [twelvedata.com](https://twelvedata.com)
+
+### Usage Tips
+- Each symbol = 1 API call
+- Reduce symbols if hitting limits
+- Cache enabled (5 min) to save calls
+
+## 🛠️ Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| No API key | Get free key at twelvedata.com |
+| Rate limit | Wait 1 minute, reduce symbols |
+| No data | Check symbol is valid stock ticker |
+| Port in use | Run with `--server.port=8502` |
+
+## 📱 Sharing Your App
+
+### Permanent URL
+Deploy on Streamlit Cloud (free)
+
+### Temporary Sharing
+```bash
+pip install pyngrok
+ngrok http 8501
+```
+
+### Mobile Access
+Works perfectly on phones/tablets via web browser
+
+## 🎨 Customization
+
+### Add More Symbols
+Edit the default symbols in the input field
+
+### Adjust Parameters
+- FRAMA length: Change `DEFAULT_FRAMA_LEN`
+- Risk ranges: Modify ATR multiplier
+- Signal thresholds: Adjust in Settings
+
+### Add Features
+- Email alerts
+- Database logging
+- More indicators
+- Backtesting
+
+## 📖 Understanding the Indicators
+
+### FRAMA (Fractal Adaptive MA)
+- Measures market fractality (D)
+- D ≈ 1: Strong trend (fast MA)
+- D ≈ 2: Random walk (slow MA)
+- Self-adjusting for market conditions
+
+### TD Sequential
+- **Setup**: 9 consecutive bars vs 4 bars ago
+- **Countdown**: 13 bars to confirm reversal
+- **TD9**: First exhaustion warning
+- **TD13**: Strong reversal signal
+
+### Signal Scoring
+```
+Score = FRAMA(±25) + TD(±40-60) + Position(±20) × Quad_Multiplier
+```
+
+## 🚨 Disclaimer
+
+**Important**: This tool is for educational and research purposes only. 
+- Not financial advice
+- Past performance doesn't guarantee future results
+- Always do your own research
+- Never risk more than you can afford to lose
+
+## 🤝 Support
+
+### Resources
+- [Streamlit Docs](https://docs.streamlit.io)
+- [Twelve Data Docs](https://twelvedata.com/docs)
+- [GitHub Issues](https://github.com/yourusername/trading-app/issues)
+
+### Common Questions
+
+**Q: How many symbols can I track?**
+A: Free API allows ~50-100 symbols per day
+
+**Q: Can I use for crypto?**
+A: No, stocks only (crypto disabled)
+
+**Q: How often does data update?**
+A: Real-time during market hours, cached for 5 minutes
+
+**Q: Can I backtest strategies?**
+A: Basic backtesting included, advanced coming soon
+
+## 📝 License
+
+MIT License - Free to use and modify
+
+## 🙏 Credits
+
+- FRAMA by John Ehlers
+- TD Sequential by Tom DeMark
+- Quad Framework by Hedgeye
+- Built with Streamlit + Python
+
+---
+
+**Made with
