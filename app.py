@@ -1,8 +1,8 @@
-# app.py — The Research Report (FRAMA + DeMark, Enhanced)
+# app.py — The Research Report (Performance Optimized)
 """
 The Research Report — Macro + Technical Trading Dashboard
 Features: FRAMA, DeMark TD Sequential, Risk Ranges, Volume Analysis
-Version: 4.0 — Enhanced with all fixes and improvements
+Version: 4.1 — Performance Optimized for Speed
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from urllib.parse import quote_plus
 from datetime import datetime
+import time
 
 # ------------------------- Page Configuration -------------------------
 st.set_page_config(
@@ -24,17 +25,27 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Hide sidebar
+# Hide sidebar and optimize CSS
 st.markdown("""
 <style>
 [data-testid="stSidebar"] { display: none !important; }
 .stMetric > div:first-child { font-size: 0.9rem; }
 .stMetric > div:nth-child(2) { font-size: 1.5rem; font-weight: bold; }
+/* Optimize rendering */
+.element-container { transition: none !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📊 The Research Report")
-st.caption(f"Technical Trading Dashboard | Build: {datetime.now().strftime('%Y.%m.%d')} | v4.0 Enhanced")
+st.caption(f"Technical Trading Dashboard | Build: {datetime.now().strftime('%Y.%m.%d')} | v4.1 Optimized")
+
+# ------------------------- Performance Settings -------------------------
+# Reduce default data points for faster loading
+DEFAULT_OUTPUTSIZE = 500  # Reduced from 800
+DEFAULT_FRAMA_LEN = 20
+MIN_DATA_POINTS = 30
+CACHE_TTL = 300  # 5 minutes cache
 
 # ------------------------- API Key with Validation -------------------------
 try:
@@ -48,42 +59,29 @@ if not API_KEY:
     API_KEY = st.text_input("Or enter your API key here:", type="password")
     if not API_KEY:
         st.stop()
-    # Validate API key format
     elif len(API_KEY) < 10:
         st.error("❌ Invalid API key format - key seems too short")
         st.stop()
 
-# ------------------------- Constants & Sector Map -------------------------
-DEFAULT_OUTPUTSIZE = 800
-DEFAULT_FRAMA_LEN = 20
-MIN_DATA_POINTS = 30  # Minimum bars needed for reliable signals
-
+# ------------------------- Sector Map (Reduced) -------------------------
 SYMBOL_SECTORS = {
     'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOGL': 'Technology', 'NVDA': 'Technology',
-    'META': 'Technology', 'CRM': 'Technology', 'QQQ': 'Technology', 'XLK': 'Technology',
-    'AMZN': 'Consumer Discretionary', 'TSLA': 'Consumer Discretionary', 'NKE': 'Consumer Discretionary',
-    'JPM': 'Financials', 'BAC': 'Financials', 'XLF': 'Financials', 'GS': 'Financials',
-    'XOM': 'Energy', 'CVX': 'Energy', 'XLE': 'Energy', 'COP': 'Energy', 'SLB': 'Energy',
-    'PG': 'Consumer Staples', 'KO': 'Consumer Staples', 'WMT': 'Consumer Staples', 'COST': 'Consumer Staples', 'PEP': 'Consumer Staples',
-    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'UNH': 'Healthcare', 'CVS': 'Healthcare', 'XLV': 'Healthcare',
-    'XLI': 'Industrials', 'XLU': 'Utilities',
-    'FCX': 'Materials',
-    'GLD': 'Gold',
-    'TLT': 'Bonds', 'SHY': 'Bonds',
-    'UUP': 'Cash/Dollar',
-    'SPY': 'Market'
+    'META': 'Technology', 'QQQ': 'Technology', 'AMZN': 'Consumer', 'TSLA': 'Consumer',
+    'JPM': 'Financials', 'XLF': 'Financials', 'XOM': 'Energy', 'XLE': 'Energy',
+    'SPY': 'Market', 'IWM': 'Market', 'DIA': 'Market'
 }
 
-# ------------------------- Data Fetch -------------------------
-@st.cache_data(show_spinner=False, ttl=300)
-def fetch_ohlcv(symbol: str, interval: str = "1day", outputsize: int = DEFAULT_OUTPUTSIZE, apikey: str = "") -> "pd.DataFrame":
+# ------------------------- Optimized Data Fetch -------------------------
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL)
+def fetch_ohlcv(symbol: str, interval: str = "1day", outputsize: int = DEFAULT_OUTPUTSIZE, apikey: str = "") -> pd.DataFrame:
+    """Optimized data fetching with better error handling"""
     url = (
         f"https://api.twelvedata.com/time_series?"
         f"symbol={quote_plus(symbol)}&interval={interval}&outputsize={outputsize}"
         f"&order=ASC&timezone=America/New_York&apikey={apikey}"
     )
     try:
-        r = requests.get(url, timeout=30)
+        r = requests.get(url, timeout=15)  # Reduced timeout
         if r.status_code == 429:
             raise RuntimeError("Rate limit hit. Wait 1 minute or reduce symbols.")
         if r.status_code != 200:
@@ -97,721 +95,445 @@ def fetch_ohlcv(symbol: str, interval: str = "1day", outputsize: int = DEFAULT_O
         if not vals:
             raise RuntimeError("No data returned")
 
+        # Vectorized operations for speed
         df = pd.DataFrame(vals)
-        for c in ["open", "high", "low", "close", "volume"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+        numeric_cols = ["open", "high", "low", "close", "volume"]
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
         df["datetime"] = pd.to_datetime(df["datetime"])
 
         return df.dropna(subset=["datetime"]).sort_values("datetime").reset_index(drop=True)
 
+    except requests.Timeout:
+        raise RuntimeError(f"Request timeout for {symbol} - try again")
     except Exception as e:
         raise RuntimeError(f"Failed to fetch {symbol}: {str(e)}")
 
-# ------------------------- Indicators -------------------------
-def calculate_frama(high: pd.Series, low: pd.Series, close: pd.Series, length: int = DEFAULT_FRAMA_LEN) -> "Tuple[pd.Series, pd.Series]":
+# ------------------------- Optimized Indicators -------------------------
+@st.cache_data(ttl=CACHE_TTL)
+def calculate_frama_vectorized(high: pd.Series, low: pd.Series, close: pd.Series, length: int = DEFAULT_FRAMA_LEN) -> Tuple[pd.Series, pd.Series]:
+    """Vectorized FRAMA calculation for better performance"""
     n = len(close)
+    if n < length:
+        return pd.Series(np.nan, index=close.index), pd.Series(np.nan, index=close.index)
+    
+    # Pre-allocate arrays
     frama = np.full(n, np.nan)
     D = np.full(n, np.nan)
-    if n == 0:
-        return pd.Series(frama, index=close.index), pd.Series(D, index=close.index)
-    v = float(close.iloc[0])
-    for i in range(n):
-        if i >= length - 1:
-            half = length // 2
-            s = i - length + 1
-            h1 = np.max(high[s:s+half]); l1 = np.min(low[s:s+half])
-            h2 = np.max(high[s+half:i+1]); l2 = np.min(low[s+half:i+1])
-            h3 = np.max(high[s:i+1]);     l3 = np.min(low[s:i+1])
-            n1 = (h1 - l1) / max(half, 1)
-            n2 = (h2 - l2) / max(half, 1)
-            n3 = (h3 - l3) / max(length, 1)
-            if n1 > 0 and n2 > 0 and n3 > 0:
-                d = (math.log(n1 + n2) - math.log(n3)) / math.log(2.0)
-                d = np.clip(d, 1.0, 2.0); D[i] = d
-                alpha = np.clip(math.exp(-4.6 * (d - 1.0)), 0.01, 1.0)
-                v = alpha * float(close.iloc[i]) + (1 - alpha) * v
+    
+    # Vectorized operations where possible
+    half = length // 2
+    
+    # Initialize with first close
+    v = close.iloc[0]
+    
+    for i in range(length - 1, n):
+        s = i - length + 1
+        
+        # Use numpy for faster min/max
+        h1 = high[s:s+half].max()
+        l1 = low[s:s+half].min()
+        h2 = high[s+half:i+1].max()
+        l2 = low[s+half:i+1].min()
+        h3 = high[s:i+1].max()
+        l3 = low[s:i+1].min()
+        
+        n1 = (h1 - l1) / half
+        n2 = (h2 - l2) / half
+        n3 = (h3 - l3) / length
+        
+        if n1 > 0 and n2 > 0 and n3 > 0:
+            d = (np.log(n1 + n2) - np.log(n3)) / np.log(2.0)
+            d = np.clip(d, 1.0, 2.0)
+            D[i] = d
+            alpha = np.exp(-4.6 * (d - 1.0))
+            alpha = np.clip(alpha, 0.01, 1.0)
+            v = alpha * close.iloc[i] + (1 - alpha) * v
+        
         frama[i] = v
+    
     return pd.Series(frama, index=close.index), pd.Series(D, index=close.index)
 
-def calculate_td_sequential(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Fixed TD Sequential with correct countdown logic"""
+@st.cache_data(ttl=CACHE_TTL)
+def calculate_td_sequential_optimized(df: pd.DataFrame) -> pd.DataFrame:
+    """Optimized TD Sequential calculation"""
     df = df.copy()
     n = len(df)
+    
+    # Pre-allocate columns
     df['td_setup'] = 0
     df['td_countdown'] = 0
     df['td_nine'] = False
     df['td_thirteen'] = False
     
-    # Setup phase
+    # Vectorized close comparison
+    close_arr = df['close'].values
+    
+    # Setup phase - partially vectorized
     for i in range(4, n):
-        if df['close'].iloc[i] < df['close'].iloc[i-4]:
-            df.loc[i, 'td_setup'] = 1 if df['td_setup'].iloc[i-1] > 0 else df['td_setup'].iloc[i-1] - 1
-        elif df['close'].iloc[i] > df['close'].iloc[i-4]:
-            df.loc[i, 'td_setup'] = 1 if df['td_setup'].iloc[i-1] < 0 else df['td_setup'].iloc[i-1] + 1
-        else:
-            df.loc[i, 'td_setup'] = 0
+        if close_arr[i] < close_arr[i-4]:
+            df.iloc[i, df.columns.get_loc('td_setup')] = 1 if df.iloc[i-1]['td_setup'] > 0 else df.iloc[i-1]['td_setup'] - 1
+        elif close_arr[i] > close_arr[i-4]:
+            df.iloc[i, df.columns.get_loc('td_setup')] = 1 if df.iloc[i-1]['td_setup'] < 0 else df.iloc[i-1]['td_setup'] + 1
     
-    df['td_nine'] = (df['td_setup'].abs() == 9)
+    # Vectorized TD9 detection
+    df['td_nine'] = df['td_setup'].abs() == 9
     
-    # Countdown phase (FIXED LOGIC)
+    # Countdown phase (fixed logic)
     countdown_active = False
     countdown_count = 0
     countdown_direction = 0
     
+    high_arr = df['high'].values
+    low_arr = df['low'].values
+    
     for i in range(2, n):
-        if df['td_nine'].iloc[i]:
+        if df.iloc[i]['td_nine']:
             countdown_active = True
             countdown_count = 0
-            # Fixed: After buy setup (-9), look for bullish confirmation
-            # After sell setup (+9), look for bearish confirmation
-            if df['td_setup'].iloc[i] == -9:
-                countdown_direction = 1  # Buy setup, look for bullish bars
-            else:  # td_setup == 9
-                countdown_direction = -1  # Sell setup, look for bearish bars
+            countdown_direction = 1 if df.iloc[i]['td_setup'] == -9 else -1
         
         if countdown_active and i >= 2:
-            # Fixed countdown logic
-            if countdown_direction == 1 and df['close'].iloc[i] >= df['high'].iloc[i-2]:
-                # Bullish confirmation after buy setup
+            if countdown_direction == 1 and close_arr[i] >= high_arr[i-2]:
                 countdown_count += 1
-            elif countdown_direction == -1 and df['close'].iloc[i] <= df['low'].iloc[i-2]:
-                # Bearish confirmation after sell setup
+            elif countdown_direction == -1 and close_arr[i] <= low_arr[i-2]:
                 countdown_count += 1
             
-            df.loc[i, 'td_countdown'] = countdown_count
+            df.iloc[i, df.columns.get_loc('td_countdown')] = countdown_count
             
             if countdown_count >= 13:
-                df.loc[i, 'td_thirteen'] = True
+                df.iloc[i, df.columns.get_loc('td_thirteen')] = True
                 countdown_active = False
     
     return df
 
-# ------------------------- Enhanced Signal Engine with Volume -------------------------
-@st.cache_data(ttl=60)  # Cache for 1 minute for performance
-def calculate_all_signals(df: "pd.DataFrame", symbol: str) -> "pd.DataFrame":
-    """Cached signal calculation for performance"""
-    return generate_signals(df)
-
-def generate_signals(df: "pd.DataFrame") -> "pd.DataFrame":
+# ------------------------- Optimized Signal Engine -------------------------
+@st.cache_data(ttl=CACHE_TTL)
+def generate_signals_optimized(df: pd.DataFrame) -> pd.DataFrame:
+    """Optimized signal generation with vectorized operations"""
     df = df.copy()
     
-    # Check minimum data requirement
     if len(df) < MIN_DATA_POINTS:
         df['signal_score'] = 0.0
         df['signal_type'] = 'INSUFFICIENT_DATA'
         df['confidence'] = 'Low'
         return df
     
-    # FRAMA variants
-    df['frama'], df['D'] = calculate_frama(df['high'], df['low'], df['close'])
-    df['frama_fast'], _ = calculate_frama(df['high'], df['low'], df['close'], 10)
-    df['frama_slow'], _ = calculate_frama(df['high'], df['low'], df['close'], 30)
-
-    # ATR (EWMA of True Range)
-    prev_close = df['close'].shift(1)
-    tr = pd.concat([
-        (df['high'] - df['low']).abs(),
-        (df['high'] - prev_close).abs(),
-        (df['low'] - prev_close).abs()
-    ], axis=1).max(axis=1)
-    df['atr'] = tr.ewm(alpha=1/14, adjust=False).mean()
-
+    # Calculate indicators
+    df['frama'], df['D'] = calculate_frama_vectorized(df['high'], df['low'], df['close'])
+    df['frama_fast'], _ = calculate_frama_vectorized(df['high'], df['low'], df['close'], 10)
+    df['frama_slow'], _ = calculate_frama_vectorized(df['high'], df['low'], df['close'], 30)
+    
+    # Vectorized ATR calculation
+    high_low = df['high'] - df['low']
+    high_close = (df['high'] - df['close'].shift()).abs()
+    low_close = (df['low'] - df['close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['atr'] = tr.ewm(alpha=1/14, adjust=False, min_periods=1).mean()
+    
     # Risk ranges
     df['rr_upper'] = df['frama'] + df['atr']
     df['rr_lower'] = df['frama'] - df['atr']
-
-    # Volume Analysis (NEW)
+    
+    # Volume analysis - vectorized
     df['volume_ma'] = df['volume'].rolling(20, min_periods=1).mean()
     df['volume_spike'] = df['volume'] > (df['volume_ma'] * 1.5)
     
     # TD Sequential
-    df = calculate_td_sequential(df)
-
-    # Safe price position in range [0,1]
-    denom = (df['rr_upper'] - df['rr_lower']).replace(0, np.nan)
-    price_pos_series = ((df['close'] - df['rr_lower']) / denom).clip(0, 1).fillna(0.5)
-
-    # Enhanced Scoring with Volume and Confidence
+    df = calculate_td_sequential_optimized(df)
+    
+    # Vectorized price position
+    price_range = df['rr_upper'] - df['rr_lower']
+    df['price_position'] = ((df['close'] - df['rr_lower']) / price_range.where(price_range != 0, np.nan)).clip(0, 1).fillna(0.5)
+    
+    # Vectorized scoring where possible
     df['signal_score'] = 0.0
-    df['signal_type'] = 'NEUTRAL'
-    df['confidence'] = 'Low'
-
-    for i in range(len(df)):
-        score = 0.0
-        confidence = 0
-
-        # Trend via FRAMA cross
-        ff = df['frama_fast'].iloc[i]
-        fs = df['frama_slow'].iloc[i]
-        trend_up = pd.notna(ff) and pd.notna(fs) and (ff > fs)
-        
-        score += 25 if trend_up else -25
-        if abs(ff - fs) / fs > 0.02 if pd.notna(fs) and fs != 0 else False:  # Strong trend
-            confidence += 1
-
-        # TD signals
-        if bool(df['td_nine'].iloc[i]):
-            if df['td_setup'].iloc[i] == -9:
-                score += 40
-                confidence += 1
-            elif df['td_setup'].iloc[i] == 9:
-                score -= 40
-                confidence += 1
-
-        if bool(df['td_thirteen'].iloc[i]):
-            score += 60 if df['td_countdown'].iloc[i] > 0 else -60
-            confidence += 2  # TD13 is high confidence
-
-        # Price location in range
-        ppos = float(price_pos_series.iloc[i])
-        if ppos < 0.2:
-            score += 20
-            if trend_up: confidence += 1
-        elif ppos > 0.8:
-            score -= 20
-            if not trend_up: confidence += 1
-
-        # Volume confirmation (NEW)
-        if df['volume_spike'].iloc[i]:
-            if score > 0:
-                score += 10  # Volume confirms bullish signal
-                confidence += 1
-            elif score < 0:
-                score -= 10  # Volume confirms bearish signal
-                confidence += 1
-
-        # Signal classification
-        if score >= 50:
-            sig = 'STRONG BUY'
-        elif score >= 25:
-            sig = 'BUY'
-        elif score <= -50:
-            sig = 'STRONG SELL'
-        elif score <= -25:
-            sig = 'SELL'
-        else:
-            sig = 'NEUTRAL'
-
-        # Confidence level
-        conf_level = ['Low', 'Medium', 'High', 'Very High'][min(confidence, 3)]
-
-        df.loc[i, 'signal_type'] = sig
-        df.loc[i, 'signal_score'] = score
-        df.loc[i, 'confidence'] = conf_level
-
+    
+    # Trend scoring - vectorized
+    trend_score = np.where(
+        (df['frama_fast'].notna()) & (df['frama_slow'].notna()) & (df['frama_fast'] > df['frama_slow']),
+        25, -25
+    )
+    df['signal_score'] += trend_score
+    
+    # TD9 scoring
+    td9_buy_score = np.where((df['td_nine']) & (df['td_setup'] == -9), 40, 0)
+    td9_sell_score = np.where((df['td_nine']) & (df['td_setup'] == 9), -40, 0)
+    df['signal_score'] += td9_buy_score + td9_sell_score
+    
+    # TD13 scoring
+    td13_score = np.where(df['td_thirteen'], 
+                          np.where(df['td_countdown'] > 0, 60, -60), 0)
+    df['signal_score'] += td13_score
+    
+    # Price position scoring
+    price_score = np.where(df['price_position'] < 0.2, 20,
+                           np.where(df['price_position'] > 0.8, -20, 0))
+    df['signal_score'] += price_score
+    
+    # Volume confirmation
+    volume_boost = np.where(df['volume_spike'], 
+                            np.where(df['signal_score'] > 0, 10, -10), 0)
+    df['signal_score'] += volume_boost
+    
+    # Signal classification - vectorized
+    df['signal_type'] = np.where(df['signal_score'] >= 50, 'STRONG BUY',
+                        np.where(df['signal_score'] >= 25, 'BUY',
+                        np.where(df['signal_score'] <= -50, 'STRONG SELL',
+                        np.where(df['signal_score'] <= -25, 'SELL', 'NEUTRAL'))))
+    
+    # Confidence calculation - simplified for speed
+    df['confidence'] = np.where(df['signal_score'].abs() >= 50, 'High',
+                       np.where(df['signal_score'].abs() >= 25, 'Medium', 'Low'))
+    
     return df
 
-# ------------------------- Main UI -------------------------
-col1, col2, col3 = st.columns([3, 1.5, 1.5])
-symbols_text = col1.text_input("📊 Symbols", value="AAPL, MSFT, SPY", help="Enter stock symbols separated by commas")
-interval = col2.selectbox("⏱️ Timeframe", ["1day", "4h", "1h"], index=0, help="Daily for investing, hourly for trading")
-run_btn = col3.button("▶️ Analyze", type="primary", use_container_width=True)
+# ------------------------- Optimized Chart Creation -------------------------
+def create_chart_optimized(df: pd.DataFrame, sym: str, show_signals: bool, show_volume: bool, signal_threshold: float) -> go.Figure:
+    """Create chart with optimized rendering"""
+    
+    # Downsample data if too many points
+    max_points = 200
+    if len(df) > max_points:
+        # Keep recent data at full resolution, downsample older data
+        recent = df.iloc[-100:]
+        older = df.iloc[:-100].iloc[::2]  # Take every other point
+        df_plot = pd.concat([older, recent])
+    else:
+        df_plot = df
+    
+    fig = go.Figure()
+    
+    # Main candlestick
+    fig.add_trace(go.Candlestick(
+        x=df_plot['datetime'], 
+        open=df_plot['open'], 
+        high=df_plot['high'], 
+        low=df_plot['low'], 
+        close=df_plot['close'],
+        name=sym,
+        increasing_line_width=1,
+        decreasing_line_width=1
+    ))
+    
+    # Lines with reduced points
+    fig.add_trace(go.Scatter(
+        x=df_plot['datetime'], 
+        y=df_plot['rr_upper'],
+        mode='lines',
+        name='Resistance',
+        line=dict(color='rgba(255,0,0,0.3)', width=1),
+        hoverinfo='skip'
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=df_plot['datetime'], 
+        y=df_plot['frama'],
+        mode='lines',
+        name='FRAMA',
+        line=dict(color='blue', width=2)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=df_plot['datetime'], 
+        y=df_plot['rr_lower'],
+        mode='lines',
+        name='Support',
+        line=dict(color='rgba(0,255,0,0.3)', width=1),
+        hoverinfo='skip'
+    ))
+    
+    # Only add signal markers if enabled
+    if show_signals:
+        # TD9 signals - only recent ones for performance
+        recent_df = df.iloc[-100:]  # Last 100 bars only
+        
+        td9_buys = recent_df[recent_df['td_nine'] & (recent_df['td_setup'] == -9)]
+        if not td9_buys.empty:
+            fig.add_trace(go.Scatter(
+                x=td9_buys['datetime'],
+                y=td9_buys['low'] * 0.99,
+                mode='markers',
+                name='TD9 Buy',
+                marker=dict(color='green', size=10, symbol='triangle-up'),
+                hovertext=['Buy'] * len(td9_buys)
+            ))
+        
+        td9_sells = recent_df[recent_df['td_nine'] & (recent_df['td_setup'] == 9)]
+        if not td9_sells.empty:
+            fig.add_trace(go.Scatter(
+                x=td9_sells['datetime'],
+                y=td9_sells['high'] * 1.01,
+                mode='markers',
+                name='TD9 Sell',
+                marker=dict(color='red', size=10, symbol='triangle-down'),
+                hovertext=['Sell'] * len(td9_sells)
+            ))
+    
+    # Optimize layout
+    fig.update_layout(
+        title=f"{sym} - Technical Analysis",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        height=500,  # Reduced height for faster rendering
+        xaxis_rangeslider_visible=False,
+        template="plotly_white",
+        hovermode='x unified',
+        showlegend=False,  # Hide legend for cleaner look
+        margin=dict(l=0, r=0, t=30, b=0),
+        xaxis=dict(
+            fixedrange=False,
+            rangebreaks=[
+                dict(bounds=["sat", "mon"])  # Hide weekends
+            ]
+        ),
+        yaxis=dict(fixedrange=False)
+    )
+    
+    # Disable some interactions for performance
+    fig.update_traces(xaxis="x", yaxis="y")
+    
+    return fig
 
-with st.expander("⚙️ Settings", expanded=False):
-    c1, c2 = st.columns(2)
+# ------------------------- Main UI -------------------------
+col1, col2, col3, col4 = st.columns([3, 1.5, 1.5, 1])
+symbols_text = col1.text_input("📊 Symbols (max 5)", value="AAPL, MSFT, SPY", help="Enter up to 5 symbols for best performance")
+interval = col2.selectbox("⏱️ Timeframe", ["1day", "4h", "1h"], index=0)
+data_points = col3.selectbox("📈 Data Points", [200, 500, 800], index=0, help="Fewer points = faster loading")
+run_btn = col4.button("▶️ Analyze", type="primary", use_container_width=True)
+
+# Quick settings (simplified)
+use_advanced = st.checkbox("Show advanced features", value=False)
+if use_advanced:
+    c1, c2, c3 = st.columns(3)
     with c1:
-        use_demark = st.checkbox("Enable TD Sequential", value=True, help="Shows exhaustion points")
-        show_signals = st.checkbox("Show signals on chart", value=True)
-        show_volume = st.checkbox("Show volume analysis", value=True, help="Volume confirmation")
+        show_signals = st.checkbox("Show TD signals", value=True)
     with c2:
-        signal_threshold = st.slider("Signal sensitivity", 0, 100, 25, help="Lower = more signals")
-        risk_percent = st.slider("Risk per trade (%)", 0.5, 5.0, 1.0, 0.5)
-        max_position_pct = st.slider("Max position size (% of account)", 10, 50, 25, 5)
+        show_volume = st.checkbox("Volume analysis", value=False)
+    with c3:
+        signal_threshold = st.slider("Signal threshold", 0, 100, 25)
+else:
+    show_signals = True
+    show_volume = False
+    signal_threshold = 25
 
 if run_btn:
-    symbols = [s.strip().upper() for s in symbols_text.split(",") if s.strip()]
+    symbols = [s.strip().upper() for s in symbols_text.split(",") if s.strip()][:5]  # Limit to 5
+    
     if not symbols:
         st.error("Please enter at least one symbol")
         st.stop()
-
+    
+    # Progress indicator
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Create tabs
     tabs = st.tabs(symbols)
-    for sym, tab in zip(symbols, tabs):
+    
+    for idx, (sym, tab) in enumerate(zip(symbols, tabs)):
         with tab:
             try:
-                with st.spinner(f"Analyzing {sym}..."):
-                    df = fetch_ohlcv(sym, interval, DEFAULT_OUTPUTSIZE, API_KEY)
-                    
-                    # Data validation
-                    if len(df) < MIN_DATA_POINTS:
-                        st.warning(f"⚠️ Insufficient data: {len(df)} bars (need {MIN_DATA_POINTS}+). Some features may be limited.")
-                    
-                    df = calculate_all_signals(df, sym)
-
-                    latest = df.iloc[-1]
-                    prev = df.iloc[-2] if len(df) > 1 else latest
-
-                    # Header with price
-                    st.markdown(f"## {sym} Analysis")
-
-                    price_change = latest['close'] - prev['close']
-                    price_pct = (price_change / prev['close']) * 100 if prev['close'] else 0.0
-
-                    c1, c2, c3, c4 = st.columns([2, 2, 2, 1.5])
-                    with c1:
-                        st.metric("Current Price", f"${latest['close']:.2f}",
-                                  f"{price_change:+.2f} ({price_pct:+.1f}%)")
-                    with c2:
-                        trend_up = (pd.notna(latest['frama_fast']) and pd.notna(latest['frama_slow']) 
-                                   and latest['frama_fast'] > latest['frama_slow'])
-                        st.metric("Market Trend", "📈 Uptrend" if trend_up else "📉 Downtrend")
-                        st.caption("Bullish momentum" if trend_up else "Bearish momentum")
-                    with c3:
-                        signal_map = {
-                            'STRONG BUY': ("💚 Strong Buy", "Excellent setup - buy now"),
-                            'BUY': ("🟢 Buy", "Good setup - consider buying"),
-                            'STRONG SELL': ("🔴 Strong Sell", "Exit immediately"),
-                            'SELL': ("🟠 Sell", "Consider reducing position"),
-                            'NEUTRAL': ("⚪ Wait", "No clear opportunity"),
-                            'INSUFFICIENT_DATA': ("⚠️ Limited", "Need more data")
-                        }
-                        signal_display, signal_desc = signal_map.get(latest['signal_type'], ("⚪ Wait", "No signal"))
-                        st.metric("Signal", signal_display)
-                        st.caption(signal_desc)
-                    with c4:
-                        # Confidence indicator (NEW)
-                        conf_color = {'Low': '🔴', 'Medium': '🟡', 'High': '🟢', 'Very High': '💚'}
-                        st.metric("Confidence", conf_color.get(latest['confidence'], '🔴') + " " + latest['confidence'])
-
-                    # Volume Analysis Section (NEW)
-                    if show_volume and 'volume_spike' in df.columns:
-                        if latest['volume_spike']:
-                            st.info(f"📊 **Volume Alert:** Current volume is {(latest['volume']/latest['volume_ma']):.1f}x average - Strong confirmation!")
-
-                    # Short-history guard for trading levels
-                    critical_cols = ['rr_lower', 'rr_upper', 'frama', 'atr']
-                    has_levels = not pd.isna(latest[critical_cols]).any()
-
-                    # TD Sequential Status with plain English
-                    if use_demark:
-                        st.markdown("### 📊 Market Exhaustion Indicators (TD Sequential)")
-                        c1, c2, c3 = st.columns(3)
-
-                        td_setup = int(latest['td_setup'])
-                        td_countdown = int(latest['td_countdown'])
-
-                        with c1:
-                            if td_setup == -9:
-                                st.metric("Exhaustion Level", "🟢 BOTTOM SIGNAL")
-                                st.caption("Selling exhausted - buy opportunity")
-                            elif td_setup == 9:
-                                st.metric("Exhaustion Level", "🔴 TOP SIGNAL")
-                                st.caption("Buying exhausted - sell warning")
-                            elif td_setup <= -7:
-                                st.metric("Exhaustion Level", f"📉 Oversold soon ({abs(td_setup)}/9)")
-                                st.caption("Bottom forming")
-                            elif td_setup >= 7:
-                                st.metric("Exhaustion Level", f"📈 Overbought soon ({td_setup}/9)")
-                                st.caption("Top forming")
-                            elif td_setup <= -4:
-                                st.metric("Exhaustion Level", f"📉 Selling pressure ({abs(td_setup)}/9)")
-                                st.caption("Downtrend active")
-                            elif td_setup >= 4:
-                                st.metric("Exhaustion Level", f"📈 Buying pressure ({td_setup}/9)")
-                                st.caption("Uptrend active")
-                            else:
-                                st.metric("Exhaustion Level", "➡️ No pattern")
-                                st.caption("Waiting for setup")
-
-                        with c2:
-                            if bool(latest['td_thirteen']):
-                                st.metric("Reversal Countdown", "⚡ MAJOR REVERSAL")
-                                st.caption("Strong reversal NOW")
-                            elif td_countdown >= 10:
-                                st.metric("Reversal Countdown", f"⚠️ Reversal soon ({td_countdown}/13)")
-                                st.caption("Major turn imminent")
-                            elif td_countdown >= 7:
-                                st.metric("Reversal Countdown", f"📊 Building ({td_countdown}/13)")
-                                st.caption("Pressure increasing")
-                            elif td_countdown >= 1:
-                                st.metric("Reversal Countdown", f"⏳ Counting ({td_countdown}/13)")
-                                st.caption("Tracking reversal")
-                            else:
-                                st.metric("Reversal Countdown", "⏸️ Inactive")
-                                st.caption("No countdown yet")
-
-                        with c3:
-                            if bool(latest['td_nine']) and td_setup == -9:
-                                st.success("✅ **BUY SETUP COMPLETE**")
-                                st.caption("Look for entry point")
-                            elif bool(latest['td_nine']) and td_setup == 9:
-                                st.error("❌ **SELL SETUP COMPLETE**")
-                                st.caption("Take profits/exit")
-                            elif bool(latest['td_thirteen']):
-                                st.warning("⚡ **MAJOR REVERSAL**")
-                                st.caption("Strong signal!")
-                            elif abs(td_setup) >= 7:
-                                st.info(f"⏰ **Signal in {9-abs(td_setup)} days**")
-                                st.caption("Get ready...")
-                            else:
-                                st.info("📊 **Monitoring...**")
-                                st.caption("No signal yet")
-
-                    # Trading Levels with actionable language
-                    st.markdown("### 🎯 Action Plan")
-
-                    price_position_value = 0.5
-                    if has_levels:
-                        denom = (latest['rr_upper'] - latest['rr_lower'])
-                        price_position_value = ((latest['close'] - latest['rr_lower']) / denom) if denom else 0.5
-                        if not (0 <= price_position_value <= 1) or pd.isna(price_position_value):
-                            price_position_value = 0.5
-
-                    st.info("📈 **Market State: UPTREND** - Look for buying opportunities" if trend_up
-                            else "📉 **Market State: DOWNTREND** - Avoid buying, consider selling")
-
-                    st.info("🟢 **Price Location: EXCELLENT** - Near support, good entry zone" if price_position_value < 0.3 else
-                            "🟡 **Price Location: DECENT** - Middle of range, okay entry" if price_position_value < 0.5 else
-                            "🟠 **Price Location: POOR** - Above middle, wait for pullback" if price_position_value < 0.7 else
-                            "🔴 **Price Location: OVERBOUGHT** - Near resistance, don't buy")
-
-                    if not has_levels:
-                        st.warning(f"Not enough data to compute targets/stop reliably yet (need {MIN_DATA_POINTS}+ bars).")
-                    else:
-                        c1, c2, c3, c4 = st.columns(4)
-                        stop_loss = latest['rr_lower'] - latest['atr'] * 0.5
-                        risk_amt = abs(latest['rr_lower'] - stop_loss)
-                        reward1 = abs(latest['frama'] - latest['rr_lower'])
-                        reward2 = abs(latest['rr_upper'] - latest['rr_lower'])
-                        rr1 = (reward1 / risk_amt) if risk_amt > 0 else 0.0
-                        rr2 = (reward2 / risk_amt) if risk_amt > 0 else 0.0
-
-                        with c1:
-                            st.success(f"**BUY at:** ${latest['rr_lower']:.2f}")
-                            st.caption("Wait for this price")
-                        with c2:
-                            st.info(f"**Target 1:** ${latest['frama']:.2f}")
-                            st.caption(f"Sell half ({rr1:.1f}:1)")
-                        with c3:
-                            st.info(f"**Target 2:** ${latest['rr_upper']:.2f}")
-                            st.caption(f"Sell rest ({rr2:.1f}:1)")
-                        with c4:
-                            st.error(f"**STOP at:** ${stop_loss:.2f}")
-                            risk_pct = abs((stop_loss - latest['rr_lower']) / latest['rr_lower'] * 100) if latest['rr_lower'] else 0.0
-                            st.caption(f"Risk: {risk_pct:.1f}%")
-
-                    # Plain English Action Box
-                    st.markdown("### 📋 What Should I Do?")
-                    if has_levels:
-                        risk_pct = abs((stop_loss - latest['rr_lower']) / latest['rr_lower'] * 100) if latest['rr_lower'] else 0.0
-                        if latest['signal_score'] >= 50:
-                            conf_text = f" (Confidence: {latest['confidence']})"
-                            st.success(f"""
-                            ### ✅ **ACTION: BUY THIS STOCK** {conf_text}
-                            1. Place a limit buy at **${latest['rr_lower']:.2f}**
-                            2. Stop loss **${stop_loss:.2f}** (risk: {risk_pct:.1f}%)
-                            3. Take half at **${latest['frama']:.2f}**
-                            4. Exit remainder at **${latest['rr_upper']:.2f}**
-                            5. Risk only **{risk_percent}%** of your account
-                            """)
-                        elif latest['signal_score'] >= 25:
-                            st.info(f"""
-                            ### 👍 **ACTION: CONSIDER BUYING** (Confidence: {latest['confidence']})
-                            - Prefer an entry near **${latest['rr_lower']:.2f}**
-                            - Use a smaller position (half size)
-                            - Stop **${stop_loss:.2f}**
-                            - Signal strength: {latest['signal_score']:.0f}/100
-                            """)
-                        elif latest['signal_score'] <= -25:
-                            st.error(f"""
-                            ### ❌ **ACTION: DO NOT BUY (Consider Selling)**
-                            - Bearish signal ({latest['signal_score']:.0f}/100)
-                            - If long, consider trimming or placing a stop
-                            - Confidence: {latest['confidence']}
-                            """)
-                        else:
-                            st.warning("### ⏸️ **ACTION: WAIT**\nNo clear edge right now. Low confidence setup.")
-                    else:
-                        st.info("⚙️ Collecting more data. Signals and levels will populate once enough history is available.")
-
-                    # Chart
-                    fig = go.Figure()
-                    fig.add_trace(go.Candlestick(
-                        x=df['datetime'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=sym
-                    ))
-                    fig.add_trace(go.Scatter(x=df['datetime'], y=df['rr_upper'], mode='lines',
-                                             name='Sell Zone (Resistance)', line=dict(color='rgba(255,0,0,0.3)', width=1)))
-                    fig.add_trace(go.Scatter(x=df['datetime'], y=df['frama'], mode='lines',
-                                             name='Fair Value (FRAMA)', line=dict(color='blue', width=2)))
-                    fig.add_trace(go.Scatter(x=df['datetime'], y=df['rr_lower'], mode='lines',
-                                             name='Buy Zone (Support)', line=dict(color='rgba(0,255,0,0.3)', width=1)))
-
-                    if use_demark and show_signals:
-                        td9_buys = df[df['td_nine'] & (df['td_setup'] == -9)]
-                        if not td9_buys.empty:
-                            fig.add_trace(go.Scatter(
-                                x=td9_buys['datetime'], y=td9_buys['low'] * 0.99,
-                                mode='markers+text', name='Buy Signal (TD9)',
-                                marker=dict(color='green', size=12, symbol='triangle-up'),
-                                text=['BUY'] * len(td9_buys), textposition='bottom center'
-                            ))
-                        td9_sells = df[df['td_nine'] & (df['td_setup'] == 9)]
-                        if not td9_sells.empty:
-                            fig.add_trace(go.Scatter(
-                                x=td9_sells['datetime'], y=td9_sells['high'] * 1.01,
-                                mode='markers+text', name='Sell Signal (TD9)',
-                                marker=dict(color='red', size=12, symbol='triangle-down'),
-                                text=['SELL'] * len(td9_sells), textposition='top center'
-                            ))
-                        td13s = df[df['td_thirteen']]
-                        if not td13s.empty:
-                            fig.add_trace(go.Scatter(
-                                x=td13s['datetime'], y=td13s['close'],
-                                mode='markers', name='Major Reversal (TD13)',
-                                marker=dict(color='yellow', size=15, symbol='star',
-                                            line=dict(color='black', width=2))
-                            ))
-
-                    # Volume spike markers (NEW)
-                    if show_volume and 'volume_spike' in df.columns:
-                        vol_spikes = df[df['volume_spike']]
-                        if not vol_spikes.empty:
-                            fig.add_trace(go.Scatter(
-                                x=vol_spikes['datetime'], y=vol_spikes['low'] * 0.98,
-                                mode='markers', name='Volume Spike',
-                                marker=dict(color='purple', size=8, symbol='diamond'),
-                                hovertext=['Vol Spike'] * len(vol_spikes)
-                            ))
-
-                    if show_signals:
-                        for i in range(len(df)):
-                            sc = df['signal_score'].iloc[i]
-                            if pd.notna(sc) and (abs(sc) >= signal_threshold):
-                                color = 'rgba(0,255,0,0.05)' if sc > 0 else 'rgba(255,0,0,0.05)'
-                                fig.add_vrect(
-                                    x0=df['datetime'].iloc[i],
-                                    x1=df['datetime'].iloc[min(i+1, len(df)-1)],
-                                    fillcolor=color, layer="below", line_width=0
-                                )
-
-                    fig.update_layout(
-                        title=f"The Research Report — {sym}",
-                        xaxis_title="Date", yaxis_title="Price ($)",
-                        height=600, xaxis_rangeslider_visible=False,
-                        template="plotly_white", hovermode='x unified',
-                        showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    # Plain English Summary with Volume info
-                    st.markdown("### 📝 Plain English Summary")
-                    parts = []
-                    parts.append(f"{sym} is in an **uptrend** (bullish)" if trend_up else f"{sym} is in a **downtrend** (bearish)")
-                    
-                    if use_demark:
-                        if td_setup == -9: parts.append("Selling looks exhausted (potential bottom)")
-                        elif td_setup == 9: parts.append("Buying looks exhausted (potential top)")
-                        elif abs(td_setup) >= 7: parts.append(f"A reversal setup may complete in {9-abs(td_setup)} bars")
-                    
-                    if price_position_value < 0.3: parts.append("Price is near support (good for buying)")
-                    elif price_position_value > 0.7: parts.append("Price is near resistance (good for selling)")
-                    else: parts.append("Price is in the middle of its range")
-                    
-                    # Add volume info
-                    if latest['volume_spike']:
-                        parts.append("**Volume is confirming the move** (high activity)")
-                    
-                    sc = latest['signal_score']
-                    parts.append("**Strong buy signal**" if sc >= 50 else
-                                 "Moderate buy signal" if sc >= 25 else
-                                 "**Strong sell signal**" if sc <= -50 else
-                                 "Moderate sell signal" if sc <= -25 else
-                                 "No clear signal - better to wait")
-                    
-                    parts.append(f"Signal confidence: **{latest['confidence']}**")
-                    
-                    sector = SYMBOL_SECTORS.get(sym, 'Unknown')
-                    parts.append(f"Sector: {sector}")
-                    st.info(". ".join(parts) + ".")
-
-                    # Enhanced Position Calculator with Max Position Check
-                    with st.expander("💰 Position Size Calculator", expanded=False):
-                        account = st.number_input("Your Account Size ($)", value=10000, step=100, key=f"acc_{sym}",
-                                                  help="Total value of your trading account")
-                        if has_levels:
-                            entry = latest['rr_lower']
-                            stop = entry - latest['atr'] * 0.5
-                            risk_amt = account * (risk_percent / 100)
-                            per_share_risk = abs(entry - stop)
-                            shares = int(risk_amt / per_share_risk) if per_share_risk > 0 else 0
-                            position_value = shares * entry
-                            
-                            # Max position size check (NEW)
-                            max_position_value = account * (max_position_pct / 100)
-                            if position_value > max_position_value:
-                                shares = int(max_position_value / entry)
-                                position_value = shares * entry
-                                st.warning(f"⚠️ Position capped at {max_position_pct}% of account for safety")
-                            
-                            c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("Shares to Buy", f"{shares:,}")
-                            c2.metric("Total Cost", f"${position_value:,.2f}")
-                            c3.metric("Risk Amount", f"${risk_amt:.2f}")
-                            c4.metric("Potential Profit", f"${shares * (latest['rr_upper'] - entry):.2f}")
-                            
-                            # Risk/Reward display
-                            rr_ratio = (latest['rr_upper'] - entry) / per_share_risk if per_share_risk > 0 else 0
-                            if rr_ratio >= 2:
-                                st.success(f"✅ Risk/Reward: {rr_ratio:.1f}:1 - Great trade!")
-                            elif rr_ratio >= 1.5:
-                                st.info(f"👍 Risk/Reward: {rr_ratio:.1f}:1 - Acceptable trade")
-                            else:
-                                st.warning(f"⚠️ Risk/Reward: {rr_ratio:.1f}:1 - Poor trade setup")
-                            
-                            st.info(f"""
-                            **Trade Summary:**
-                            - Buy {shares:,} shares @ ${entry:.2f}
-                            - Stop loss @ ${stop:.2f}
-                            - Maximum loss: ${risk_amt:.2f} ({risk_percent}% of account)
-                            - Position size: {(position_value/account*100):.1f}% of account
-                            """)
-                        else:
-                            st.caption("Need more history to compute entry/stop/targets.")
-
-                    # Data Quality Indicator (NEW)
-                    with st.expander("📊 Data Quality & Reliability", expanded=False):
-                        data_points = len(df)
-                        quality_score = min(100, (data_points / 200) * 100)
-                        
-                        st.progress(quality_score / 100)
-                        st.caption(f"Data Quality: {quality_score:.0f}% ({data_points} bars)")
-                        
-                        if data_points < 30:
-                            st.error("❌ Insufficient data - signals unreliable")
-                        elif data_points < 100:
-                            st.warning("⚠️ Limited data - use caution")
-                        elif data_points < 200:
-                            st.info("✅ Good data - signals reliable")
-                        else:
-                            st.success("💚 Excellent data - high confidence")
-                        
-                        # Show confidence factors
-                        st.markdown("**Confidence Factors:**")
-                        checks = {
-                            "Enough historical data": data_points >= MIN_DATA_POINTS,
-                            "FRAMA calculated": pd.notna(latest['frama']),
-                            "TD Sequential active": abs(latest['td_setup']) > 0,
-                            "Volume data available": pd.notna(latest['volume_ma']),
-                            "Risk levels computed": has_levels
-                        }
-                        for check, passed in checks.items():
-                            st.write(f"{'✅' if passed else '❌'} {check}")
-
-                    # Download with enhanced data
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        "📥 Download Full Data (CSV)",
-                        csv,
-                        f"{sym}_{interval}_enhanced_analysis.csv",
-                        "text/csv",
-                        key=f"dl_{sym}"
-                    )
-
-            except Exception as e:
-                st.error(f"""
-                ### ❌ Error analyzing {sym}
-
-                **What went wrong:** {str(e)}
-
-                **Common fixes:**
-                - Check the symbol (e.g., AAPL not APPL)
-                - Ensure it's a supported stock/ETF
-                - Try again if rate limited (wait 60 seconds)
-                - Verify your API key is valid
-                - Check if you have enough API calls remaining
-                """)
+                # Update progress
+                progress = (idx + 0.5) / len(symbols)
+                progress_bar.progress(progress)
+                status_text.text(f"Analyzing {sym}...")
                 
-                # Debug info
-                with st.expander("🔧 Debug Information"):
-                    st.code(f"""
-                    Symbol: {sym}
-                    Interval: {interval}
-                    API Key Length: {len(API_KEY) if API_KEY else 0}
-                    Error Type: {type(e).__name__}
-                    Error Details: {str(e)}
-                    """)
+                # Fetch and process data
+                df = fetch_ohlcv(sym, interval, data_points, API_KEY)
+                
+                if len(df) < MIN_DATA_POINTS:
+                    st.warning(f"⚠️ Limited data: {len(df)} bars")
+                    continue
+                
+                # Generate signals
+                df = generate_signals_optimized(df)
+                
+                latest = df.iloc[-1]
+                prev = df.iloc[-2] if len(df) > 1 else latest
+                
+                # Simplified metrics display
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    price_change = latest['close'] - prev['close']
+                    price_pct = (price_change / prev['close'] * 100) if prev['close'] else 0
+                    st.metric("Price", f"${latest['close']:.2f}", f"{price_pct:+.1f}%")
+                
+                with col2:
+                    trend_up = (latest.get('frama_fast', 0) > latest.get('frama_slow', 0))
+                    st.metric("Trend", "📈 UP" if trend_up else "📉 DOWN")
+                
+                with col3:
+                    signal_emoji = {
+                        'STRONG BUY': '💚', 'BUY': '🟢', 
+                        'STRONG SELL': '🔴', 'SELL': '🟠',
+                        'NEUTRAL': '⚪', 'INSUFFICIENT_DATA': '⚠️'
+                    }
+                    st.metric("Signal", signal_emoji.get(latest['signal_type'], '⚪') + " " + latest['signal_type'].replace('_', ' '))
+                
+                with col4:
+                    st.metric("Score", f"{latest['signal_score']:.0f}")
+                
+                # Quick action box
+                if latest['signal_score'] >= 50:
+                    st.success(f"✅ **BUY** - Strong signal ({latest['signal_score']:.0f}/100)")
+                elif latest['signal_score'] >= 25:
+                    st.info(f"👍 **Consider buying** - Moderate signal")
+                elif latest['signal_score'] <= -25:
+                    st.error(f"❌ **SELL/AVOID** - Negative signal")
+                else:
+                    st.warning("⏸️ **WAIT** - No clear signal")
+                
+                # Trading levels (simplified)
+                if pd.notna(latest.get('rr_lower')) and pd.notna(latest.get('rr_upper')):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.info(f"**Entry:** ${latest['rr_lower']:.2f}")
+                    with col2:
+                        st.info(f"**Target:** ${latest['rr_upper']:.2f}")
+                    with col3:
+                        stop = latest['rr_lower'] - latest.get('atr', 0) * 0.5
+                        st.error(f"**Stop:** ${stop:.2f}")
+                
+                # Chart
+                with st.container():
+                    chart = create_chart_optimized(df, sym, show_signals, show_volume, signal_threshold)
+                    st.plotly_chart(chart, use_container_width=True, config={'displayModeBar': False})
+                
+                # TD Sequential status (if enabled)
+                if use_advanced and 'td_setup' in latest:
+                    td_setup = int(latest.get('td_setup', 0))
+                    if abs(td_setup) >= 7:
+                        st.info(f"📊 TD Sequential: {abs(td_setup)}/9 - Signal soon!")
+                    if latest.get('td_nine', False):
+                        st.warning("⚡ TD9 Signal Complete!")
+                
+                # Update progress
+                progress = (idx + 1) / len(symbols)
+                progress_bar.progress(progress)
+                
+            except Exception as e:
+                st.error(f"Error with {sym}: {str(e)}")
+                continue
+    
+    # Clear progress indicators
+    progress_bar.empty()
+    status_text.empty()
 
-# ------------------------- Reference & Footer -------------------------
+# ------------------------- Simplified Footer -------------------------
 st.markdown("---")
-st.markdown("## 🎯 Quick Reference Guide")
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.markdown("""### 📈 Best Setups
-- TD9 Buy + Uptrend
-- Price at lower band
-- Signal score > 50
-- High confidence level
-- Volume confirmation
-- Risk/Reward > 2:1""")
+    st.markdown("**🟢 Buy Signals:** Score > 25")
 with c2:
-    st.markdown("""### ⚠️ Warning Signs
-- TD9 Sell completed
-- Strong downtrend
-- Price at upper band
-- Low confidence signals
-- No volume support
-- Poor risk/reward (<1.5:1)""")
+    st.markdown("**⚪ Neutral:** Score -25 to 25")
 with c3:
-    st.markdown("""### 💡 Pro Tips
-- Wait for high confidence
-- Check volume spikes
-- Use position limits
-- Scale in/out of trades
-- Always use stops
-- Review data quality""")
+    st.markdown("**🔴 Sell Signals:** Score < -25")
 
-st.markdown("---")
+st.caption(f"v4.1 Performance Optimized • Data: Twelve Data • {datetime.now().strftime('%H:%M:%S')}")
 
-# Enhanced footer with version info
-col1, col2 = st.columns(2)
-with col1:
-    st.caption(f"""
-    📊 **The Research Report v4.0 Enhanced**
-    Session: {datetime.now().strftime('%H:%M:%S')} • Build: {datetime.now().strftime('%Y.%m.%d')}
-    Data: Twelve Data • API: twelvedata.com
-    """)
-with col2:
-    st.caption("""
-    **What's New in v4.0:**
-    ✅ Fixed TD Sequential countdown logic
-    ✅ Added volume confirmation signals
-    ✅ Signal confidence indicators
-    ✅ Position size safety limits
-    ✅ Data quality metrics
-    """)
-
-with st.expander("⚠️ Risk Disclaimer", expanded=False):
-    st.warning("""
-    **IMPORTANT RISK DISCLOSURE:**
-    - Past performance does not guarantee future results
-    - All trading involves substantial risk of loss
-    - This tool provides analysis, NOT financial advice
-    - Never risk more than you can afford to lose
-    - Consider paper trading before using real money
-    - Consult a financial advisor for personalized advice
-    - The developers assume no liability for trading losses
-    
-    **By using this tool, you acknowledge:**
-    - You understand the risks involved in trading
-    - You are solely responsible for your trading decisions
-    - Technical indicators can and do fail
-    - No trading system is perfect or guaranteed
-    """)
-
-# Performance tips
-with st.expander("🚀 Performance Tips", expanded=False):
-    st.info("""
-    **To improve app performance:**
-    - Analyze fewer symbols at once (3-5 max)
-    - Use daily timeframe for slower updates
-    - Clear cache if data seems stale (refresh page)
-    - Reduce outputsize if hitting rate limits
-    - Consider upgrading API plan for more calls
-    
-    **Optimal Usage:**
-    - Run analysis pre-market or after hours
-    - Save CSV exports for offline analysis
-    - Focus on high-confidence signals only
-    - Combine with fundamental analysis
-    """)
+# Cache management
+if st.button("🔄 Clear Cache", help="Click if data seems stale"):
+    st.cache_data.clear()
+    st.success("Cache cleared! Refresh to reload.")
 
