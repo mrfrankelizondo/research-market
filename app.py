@@ -664,9 +664,10 @@ if run_btn:
     
     # Get SPY data for market context
     spy_data = all_data.get('SPY')
-    if not spy_data:
+    if spy_data is None or len(spy_data) == 0:
         st.warning("Could not fetch SPY data for market context")
         market_regime = {"regime": "UNKNOWN", "description": "SPY data unavailable", "color": "gray"}
+        spy_data = None  # Ensure it's None for later checks
     else:
         market_regime = get_market_regime(spy_data)
     
