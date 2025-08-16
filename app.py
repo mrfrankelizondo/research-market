@@ -1062,4 +1062,3 @@ st.caption(f"v5.0 Pro | Data: Twelve Data | {datetime.now().strftime('%H:%M:%S')
 if st.button("🔄 Clear Cache", help="Click if data seems stale"):
     st.cache_data.clear()
     st.success("Cache cleared! Refresh to reload.")
-
